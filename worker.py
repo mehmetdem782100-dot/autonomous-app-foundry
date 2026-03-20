@@ -10,8 +10,8 @@ def main():
     host = os.getenv('RABBITMQ_HOST', 'localhost')
 
     credentials = pika.PlainCredentials(user, password)
-    parameters = pika.ConnectionParameters(host=host, credentials=credentials)
-    
+    parameters = pika.ConnectionParameters(host=host, credentials=credentials, virtual_host=user)
+
     connection = pika.BlockingConnection(parameters)
     channel = connection.channel()
     channel.queue_declare(queue='task_queue', durable=True)
