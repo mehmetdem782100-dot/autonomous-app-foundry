@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: cognita_rabbitmq
+    environment:
+      - RABBITMQ_DEFAULT_USER=aaf_user
+      - RABBITMQ_DEFAULT_PASS=aaf_pass
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  db:
+    image: postgres:15
+    container_name: cognita_postgres
+    env_file:
+      - .env
+    ports:
+      - "5432:5432"
+
+  api:
+    build: .
+    container_name: cognita_api
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    depends_on:
+      - rabbitmq
+      - db
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: .
+    container_name: cognita_worker
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    depends_on:
+      - rabbitmq

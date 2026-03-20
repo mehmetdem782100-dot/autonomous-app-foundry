@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.venv
+chroma_data/
+postgres_data/
+logs/
+*.log
+sandbox/execution_env/*
+!sandbox/execution_env/.keep
+.pytest_cache/
+htmlcov/
+.coverage
