@@ -21,7 +21,8 @@ class MemoryManager:
 
     def retrieve_context(self, query_text, top_n=5):
         try:
-            collection = self.client.get_collection_sync(self.collection_name)
+            # Düzeltme: Başına _ eklendi
+            collection = self.client._get_collection_sync(self.collection_name)
             results = collection.query(query_texts=[query_text], n_results=top_n)
             if not results['documents'] or not results['documents'][0]:
                 return []
@@ -35,18 +36,23 @@ class MemoryManager:
                     "type": results['metadatas'][0][i].get('task_type', 'unknown')
                 })
             return scored_memories
-        except:
+        except Exception as e:
+            print(f"[❌] Hafıza okuma hatası: {e}")
             return []
 
     def save_experience(self, task_type, content, result):
-        task_id = str(uuid.uuid4())
-        collection = self.client.get_collection_sync(self.collection_name)
-        collection.add(
-            documents=[f"Görev: {task_type} | İçerik: {content} | Sonuç: {result}"],
-            metadatas=[{"task_type": task_type, "timestamp": str(time.time())}],
-            ids=[task_id]
-        )
-        print(f"[🧠] Hafızaya kaydedildi: {task_id}")
+        try:
+            task_id = str(uuid.uuid4())
+            # Düzeltme: Başına _ eklendi
+            collection = self.client._get_collection_sync(self.collection_name)
+            collection.add(
+                documents=[f"Görev: {task_type} | İçerik: {content} | Sonuç: {result}"],
+                metadatas=[{"task_type": task_type, "timestamp": str(time.time())}],
+                ids=[task_id]
+            )
+            print(f"[🧠] Hafızaya kaydedildi: {task_id}")
+        except Exception as e:
+            print(f"[❌] Hafıza kayıt hatası: {e}")
 
 # --- 💡 AKIL YÜRÜTME MOTORU (ADIM 2 - ÇİFT HATLI) ---
 class ReasoningEngine:
@@ -54,18 +60,15 @@ class ReasoningEngine:
         if not memories:
             return "İLK DENEYİM: Standart protokol uygulanıyor."
 
-        # Hafızayı pozitif ve negatif olarak ayrıştır
         failures = [m for m in memories if "Hata" in m['content'] or "Başarısız" in m['content']]
         successes = [m for m in memories if "Başarıyla" in m['content'] or "Tamamlandı" in m['content']]
 
         instructions = []
         
-        # 1. Öncelik: Hatalardan Kaçın (Savunma Hattı)
         if failures:
             worst_failure = max(failures, key=lambda x: x['score'])
             instructions.append(f"⚠️ DİKKAT: Geçmişteki hatayı tekrarlama -> {worst_failure['content']}")
 
-        # 2. Öncelik: Başarıyı Model al (Saldırı Hattı)
         if successes:
             best_success = max(successes, key=lambda x: x['score'])
             instructions.append(f"✅ REFERANS: Şu başarılı yöntemi izle -> {best_success['content']}")
@@ -85,20 +88,14 @@ def callback(ch, method, properties, body):
     
     print(f"\n[🚀] İŞLEM BAŞLIYOR: {task_type.upper()}")
     
-    # Adım 1: Hatırla
     memories = memory.retrieve_context(content)
-    
-    # Adım 2: Akıl Yürüt ve Strateji Belirle
     strategy = reasoning.evaluate_strategy(content, memories)
     print(f"[💡 STRATEJİ]: {strategy}")
 
-    # Simülasyon: Stratejiye göre iş yap
     time.sleep(1)
-    # Eğer strateji bir uyarı içeriyorsa sonucu ona göre modifiye edelim (Pro seviye simülasyon)
     status = "Başarıyla" if "⚠️" not in strategy else "Düzeltilerek Başarıyla"
     result = f"{status} tamamlandı. ({strategy[:30]}...)"
     
-    # Kaydet
     memory.save_experience(task_type, content, result)
     
     print(f"[🏁] GÖREV BİTTİ.")
