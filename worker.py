@@ -13,6 +13,7 @@ class MemoryManager:
         self.collection_name = "system_memory"
 
     def _calculate_score(self, distance, timestamp):
+        # Alaka düzeyi ve güncellik hesabı
         relevance_score = 1.0 / (distance + 0.01)
         now = time.time()
         age_seconds = now - float(timestamp)
@@ -21,7 +22,6 @@ class MemoryManager:
 
     def retrieve_context(self, query_text, top_n=5):
         try:
-            # Düzeltme: Başına _ eklendi
             collection = self.client._get_collection_sync(self.collection_name)
             results = collection.query(query_texts=[query_text], n_results=top_n)
             if not results['documents'] or not results['documents'][0]:
@@ -32,18 +32,16 @@ class MemoryManager:
                 score = self._calculate_score(results['distances'][0][i], results['metadatas'][0][i]['timestamp'])
                 scored_memories.append({
                     "content": results['documents'][0][i],
-                    "score": score,
-                    "type": results['metadatas'][0][i].get('task_type', 'unknown')
+                    "score": score
                 })
             return scored_memories
         except Exception as e:
-            print(f"[❌] Hafıza okuma hatası: {e}")
+            print(f"[❌] Hafıza erişim hatası: {e}")
             return []
 
     def save_experience(self, task_type, content, result):
         try:
             task_id = str(uuid.uuid4())
-            # Düzeltme: Başına _ eklendi
             collection = self.client._get_collection_sync(self.collection_name)
             collection.add(
                 documents=[f"Görev: {task_type} | İçerik: {content} | Sonuç: {result}"],
@@ -54,62 +52,91 @@ class MemoryManager:
         except Exception as e:
             print(f"[❌] Hafıza kayıt hatası: {e}")
 
-# --- 💡 AKIL YÜRÜTME MOTORU (ADIM 2 - ÇİFT HATLI) ---
+# --- 💡 AKIL YÜRÜTME MOTORU (ADIM 2) ---
 class ReasoningEngine:
     def evaluate_strategy(self, current_task, memories):
         if not memories:
             return "İLK DENEYİM: Standart protokol uygulanıyor."
-
-        failures = [m for m in memories if "Hata" in m['content'] or "Başarısız" in m['content']]
-        successes = [m for m in memories if "Başarıyla" in m['content'] or "Tamamlandı" in m['content']]
-
-        instructions = []
         
-        if failures:
-            worst_failure = max(failures, key=lambda x: x['score'])
-            instructions.append(f"⚠️ DİKKAT: Geçmişteki hatayı tekrarlama -> {worst_failure['content']}")
+        # En yüksek skorlu anıya göre strateji belirle
+        best_memory = max(memories, key=lambda x: x['score'])
+        
+        if "Hata" in best_memory['content']:
+            return f"⚠️ DİKKAT: Benzer görevde hata yapıldı. Önceki hata verisinden kaçın."
+        return "✅ REFERANS: Geçmiş başarılar rehberliğinde ilerle."
 
-        if successes:
-            best_success = max(successes, key=lambda x: x['score'])
-            instructions.append(f"✅ REFERANS: Şu başarılı yöntemi izle -> {best_success['content']}")
+# --- 🏗️ PLANLAMA MOTORU (ADIM 3) ---
+class PlanningEngine:
+    def decompose(self, goal):
+        """Karmaşık hedefi mantıksal alt adımlara böler."""
+        print(f"[🗺️] PLANLANIYOR: {goal}")
+        
+        goal_lower = goal.lower()
+        if "rapor" in goal_lower or "analiz" in goal_lower:
+            return ["Verileri Sınıflandır", "İstatistikleri Hesapla", "Özeti Oluştur"]
+        elif "email" in goal_lower or "mesaj" in goal_lower:
+            return ["Taslak Metni Hazırla", "Hafıza Kontrolü Yap", "İletiyi Gönder"]
+        
+        return [f"Genel Görev: {goal}"]
 
-        if not instructions:
-            return "Nötr bağlam saptandı. Genel prosedürü takip et."
-
-        return " | ".join(instructions)
-
-# --- ⚙️ SİSTEM ENTEGRASYONU ---
+# --- ⚙️ SİSTEM ENTEGRASYONU & GÜVENLİK ---
 memory = MemoryManager()
 reasoning = ReasoningEngine()
+planner = PlanningEngine()
 
 def callback(ch, method, properties, body):
-    data = json.loads(body)
-    task_type, content = data.get("task"), data.get("content")
+    # 🛡️ GÜVENLİK 1: JSON Format Kontrolü
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        print("[❌] HATA: Gelen mesaj geçerli bir JSON değil. Pas geçiliyor.")
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+        return
+
+    task_type, content = data.get("task", "unknown"), data.get("content", "")
     
-    print(f"\n[🚀] İŞLEM BAŞLIYOR: {task_type.upper()}")
+    print(f"\n[🚀] ANA HEDEF ALINDI: {task_type.upper()}")
     
+    # 🕵️ Hatırla ve Düşün
     memories = memory.retrieve_context(content)
     strategy = reasoning.evaluate_strategy(content, memories)
     print(f"[💡 STRATEJİ]: {strategy}")
-
-    time.sleep(1)
-    status = "Başarıyla" if "⚠️" not in strategy else "Düzeltilerek Başarıyla"
-    result = f"{status} tamamlandı. ({strategy[:30]}...)"
     
+    # 🏗️ Planla
+    plan = planner.decompose(content)
+    
+    # Adımları Uygula (Simülasyon)
+    for i, sub_task in enumerate(plan, 1):
+        print(f"  [📍] ADIM {i}: {sub_task}")
+        time.sleep(0.3)
+        
+    result = f"Görev {len(plan)} adımda başarıyla tamamlandı."
     memory.save_experience(task_type, content, result)
     
-    print(f"[🏁] GÖREV BİTTİ.")
+    print(f"[🏁] TÜM SÜREÇ BİTTİ.")
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def start_worker():
-    user, password, host = os.getenv('RABBITMQ_USER'), os.getenv('RABBITMQ_PASS'), os.getenv('RABBITMQ_HOST')
-    url = f"amqps://{user}:{password}@{host}/{user}"
-    connection = pika.BlockingConnection(pika.URLParameters(url))
-    channel = connection.channel()
-    channel.queue_declare(queue='task_queue', durable=True)
-    channel.basic_consume(queue='task_queue', on_message_callback=callback)
-    print(' [*] Hafıza Evreni v2.0 Aktif: Akıl Yürütme Modu...')
-    channel.start_consuming()
+    # 🛡️ GÜVENLİK 2: Ortam Değişkeni Kontrolü
+    user = os.getenv('RABBITMQ_USER')
+    password = os.getenv('RABBITMQ_PASS')
+    host = os.getenv('RABBITMQ_HOST')
+
+    if not all([user, password, host]):
+        print("[❌] KRİTİK HATA: RabbitMQ bağlantı bilgileri (ENV) eksik!")
+        return
+
+    try:
+        url = f"amqps://{user}:{password}@{host}/{user}"
+        connection = pika.BlockingConnection(pika.URLParameters(url))
+        channel = connection.channel()
+        channel.queue_declare(queue='task_queue', durable=True)
+        channel.basic_consume(queue='task_queue', on_message_callback=callback)
+        
+        print(' [*] Hafıza Evreni v3.0 Aktif: Tam Kapasite Çalışıyor...')
+        channel.start_consuming()
+    except Exception as e:
+        print(f"[❌] Bağlantı hatası: {e}")
 
 if __name__ == "__main__":
     start_worker()
