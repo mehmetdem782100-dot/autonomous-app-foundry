@@ -9,15 +9,19 @@ def main():
     password = os.getenv('RABBITMQ_PASS', 'guest')
     host = os.getenv('RABBITMQ_HOST', 'localhost')
 
-    credentials = pika.PlainCredentials(user, password)
-    parameters = pika.ConnectionParameters(host=host, credentials=credentials, virtual_host=user)
+    # Bağlantı adresini tıpkı testte yaptığımız gibi güvenli (amqps) formatta oluşturuyoruz
+    url = f"amqps://{user}:{password}@{host}/{user}"
+    parameters = pika.URLParameters(url)
 
-    connection = pika.BlockingConnection(parameters)
-    channel = connection.channel()
-    channel.queue_declare(queue='task_queue', durable=True)
-    channel.basic_consume(queue='task_queue', on_message_callback=callback)
-    print(' [🚀] Worker dinlemede (Güvenli Mod)...')
-    channel.start_consuming()
+    try:
+        connection = pika.BlockingConnection(parameters)
+        channel = connection.channel()
+        channel.queue_declare(queue='task_queue', durable=True)
+        channel.basic_consume(queue='task_queue', on_message_callback=callback)
+        print(' [*] Worker dinlemede (Güvenli Mod)...')
+        channel.start_consuming()
+    except Exception as e:
+        print(f"❌ Worker Bağlantı Hatası: {e}")
 
 if __name__ == "__main__":
     main()
