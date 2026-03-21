@@ -11,6 +11,8 @@ from memory.database import Base
 from memory.models import Project, Task, AgentLog, SystemSnapshot
 
 config = context.config
+from configparser import ConfigParser
+config.file_config = ConfigParser(interpolation=None)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

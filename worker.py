@@ -3,81 +3,115 @@ import json
 import time
 import os
 import uuid
+import numpy as np
 from memory.vector_store.chroma_client import VectorDBClient
 
-# --- BELLEK AYARI ---
-memory = VectorDBClient()
+# --- 🧠 BELLEK YÖNETİCİSİ (ADIM 1) ---
+class MemoryManager:
+    def __init__(self):
+        self.client = VectorDBClient()
+        self.collection_name = "system_memory"
 
-# --- ARAÇLAR (TOOLS) ---
+    def _calculate_score(self, distance, timestamp):
+        relevance_score = 1.0 / (distance + 0.01)
+        now = time.time()
+        age_seconds = now - float(timestamp)
+        recency_score = 1.0 / (np.log1p(age_seconds / 3600) + 1)
+        return (relevance_score * 0.7) + (recency_score * 0.3)
 
-def memory_save(task_type, content, result):
-    """Görev sonucunu hafızaya (Vektör DB) kaydeder."""
-    task_id = str(uuid.uuid4())
-    metadata = {"task_type": task_type, "timestamp": str(time.time())}
-    
-    # ChromaDB'ye asenkron olmayan (sync) kayıt
-    collection = memory.get_collection_sync("system_memory")
-    collection.add(
-        documents=[f"Görev: {task_type} | İçerik: {content} | Sonuç: {result}"],
-        metadatas=[metadata],
-        ids=[task_id]
-    )
-    print(f"[🧠 MEMORY] Görev hafızaya kazındı. ID: {task_id}")
+    def retrieve_context(self, query_text, top_n=5):
+        try:
+            collection = self.client.get_collection_sync(self.collection_name)
+            results = collection.query(query_texts=[query_text], n_results=top_n)
+            if not results['documents'] or not results['documents'][0]:
+                return []
+            
+            scored_memories = []
+            for i in range(len(results['documents'][0])):
+                score = self._calculate_score(results['distances'][0][i], results['metadatas'][0][i]['timestamp'])
+                scored_memories.append({
+                    "content": results['documents'][0][i],
+                    "score": score,
+                    "type": results['metadatas'][0][i].get('task_type', 'unknown')
+                })
+            return scored_memories
+        except:
+            return []
 
-def email_taslagi_olustur(mesaj):
-    print(f"[📧 EMAIL TOOL] Taslak hazırlanıyor: '{mesaj}'")
-    time.sleep(1)
-    result = f"Taslak oluşturuldu: {mesaj[:20]}..."
-    memory_save("email", mesaj, result)
-    return result
+    def save_experience(self, task_type, content, result):
+        task_id = str(uuid.uuid4())
+        collection = self.client.get_collection_sync(self.collection_name)
+        collection.add(
+            documents=[f"Görev: {task_type} | İçerik: {content} | Sonuç: {result}"],
+            metadatas=[{"task_type": task_type, "timestamp": str(time.time())}],
+            ids=[task_id]
+        )
+        print(f"[🧠] Hafızaya kaydedildi: {task_id}")
 
-def veri_analizi_ve_kayit(mesaj):
-    print(f"[📊 ANALİZ TOOL] Veri işleniyor: '{mesaj}'")
-    time.sleep(1)
-    result = f"Analiz raporu: {len(mesaj)} karakter işlendi."
-    memory_save("analiz", mesaj, result)
-    return result
+# --- 💡 AKIL YÜRÜTME MOTORU (ADIM 2 - ÇİFT HATLI) ---
+class ReasoningEngine:
+    def evaluate_strategy(self, current_task, memories):
+        if not memories:
+            return "İLK DENEYİM: Standart protokol uygulanıyor."
 
-# --- ANA İŞLEYİCİ ---
+        # Hafızayı pozitif ve negatif olarak ayrıştır
+        failures = [m for m in memories if "Hata" in m['content'] or "Başarısız" in m['content']]
+        successes = [m for m in memories if "Başarıyla" in m['content'] or "Tamamlandı" in m['content']]
+
+        instructions = []
+        
+        # 1. Öncelik: Hatalardan Kaçın (Savunma Hattı)
+        if failures:
+            worst_failure = max(failures, key=lambda x: x['score'])
+            instructions.append(f"⚠️ DİKKAT: Geçmişteki hatayı tekrarlama -> {worst_failure['content']}")
+
+        # 2. Öncelik: Başarıyı Model al (Saldırı Hattı)
+        if successes:
+            best_success = max(successes, key=lambda x: x['score'])
+            instructions.append(f"✅ REFERANS: Şu başarılı yöntemi izle -> {best_success['content']}")
+
+        if not instructions:
+            return "Nötr bağlam saptandı. Genel prosedürü takip et."
+
+        return " | ".join(instructions)
+
+# --- ⚙️ SİSTEM ENTEGRASYONU ---
+memory = MemoryManager()
+reasoning = ReasoningEngine()
 
 def callback(ch, method, properties, body):
-    try:
-        data = json.loads(body)
-        gorev_tipi = data.get("task")
-        icerik = data.get("content")
+    data = json.loads(body)
+    task_type, content = data.get("task"), data.get("content")
+    
+    print(f"\n[🚀] İŞLEM BAŞLIYOR: {task_type.upper()}")
+    
+    # Adım 1: Hatırla
+    memories = memory.retrieve_context(content)
+    
+    # Adım 2: Akıl Yürüt ve Strateji Belirle
+    strategy = reasoning.evaluate_strategy(content, memories)
+    print(f"[💡 STRATEJİ]: {strategy}")
 
-        print(f"\n[⚙️] YENİ GÖREV ALINDI: {gorev_tipi.upper()}")
-
-        if gorev_tipi == "email":
-            email_taslagi_olustur(icerik)
-        elif gorev_tipi == "analiz":
-            veri_analizi_ve_kayit(icerik)
-        else:
-            print(f"[⚠️] Tanımlanamayan görev tipi: {gorev_tipi}")
-
-        print(f"[🏁] GÖREV BİTTİ.\n")
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-    except Exception as e:
-        print(f"[❌] İşleme hatası: {e}")
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-
-# --- BAĞLANTI ---
+    # Simülasyon: Stratejiye göre iş yap
+    time.sleep(1)
+    # Eğer strateji bir uyarı içeriyorsa sonucu ona göre modifiye edelim (Pro seviye simülasyon)
+    status = "Başarıyla" if "⚠️" not in strategy else "Düzeltilerek Başarıyla"
+    result = f"{status} tamamlandı. ({strategy[:30]}...)"
+    
+    # Kaydet
+    memory.save_experience(task_type, content, result)
+    
+    print(f"[🏁] GÖREV BİTTİ.")
+    ch.basic_ack(delivery_tag=method.delivery_tag)
 
 def start_worker():
-    user = os.getenv('RABBITMQ_USER')
-    password = os.getenv('RABBITMQ_PASS')
-    host = os.getenv('RABBITMQ_HOST')
-    
+    user, password, host = os.getenv('RABBITMQ_USER'), os.getenv('RABBITMQ_PASS'), os.getenv('RABBITMQ_HOST')
     url = f"amqps://{user}:{password}@{host}/{user}"
-    params = pika.URLParameters(url)
-    
-    connection = pika.BlockingConnection(params)
+    connection = pika.BlockingConnection(pika.URLParameters(url))
     channel = connection.channel()
     channel.queue_declare(queue='task_queue', durable=True)
-    channel.basic_qos(prefetch_count=1)
     channel.basic_consume(queue='task_queue', on_message_callback=callback)
-
-    print(' [*] İşçi uyanık ve BELLEK (Memory) modunda emir bekliyor...')
+    print(' [*] Hafıza Evreni v2.0 Aktif: Akıl Yürütme Modu...')
     channel.start_consuming()
 
 if __name__ == "__main__":
